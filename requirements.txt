@@ -1,0 +1,13 @@
+streamlit
+pypdf2
+google-generativeai
+python-dotenv
+langchain
+langgraph
+reportlab
+plotly
+rich
+graphviz
+sentence-transformers
+scikit-learn
+chromadb
