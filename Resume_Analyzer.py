@@ -278,7 +278,8 @@ def save_analysis_history(history):
         json.dump(serializable_history, f, indent=4)
 
 # --- Streamlit UI ---
-st.title("AI-Powered Resume Analyzer (LangGraph Edition)")
+st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
+st.title("AI-Powered Resume Analyzer ")
 
 api_key = os.getenv("GOOGLE_API_KEY")
 
