@@ -310,8 +310,31 @@ else:
                     resume_text = extract_text_from_pdf(uploaded_resume)
                     
                     inputs = {"resume_text": resume_text, "jd_text": job_description, "api_key": api_key}
-                    result = app.invoke(inputs)
                     
+                    # --- Explainable AI: Capture workflow steps ---
+                    workflow_steps = []
+                    accumulated_state = {}
+                    for step in app.stream(inputs):
+                        node_name = list(step.keys())[0]
+                        node_output = step[node_name]
+                        
+                        # The output of a node is a dictionary that gets merged into the state.
+                        # So we can just update our accumulated state with it.
+                        accumulated_state.update(node_output)
+
+                        # Clean up output for display
+                        display_output = node_output.copy()
+                        if "resume_embedding" in display_output:
+                            display_output["resume_embedding"] = "Embedding generated (not shown)"
+                        if "jd_embedding" in display_output:
+                            display_output["jd_embedding"] = "Embedding generated (not shown)"
+                        
+                        workflow_steps.append({
+                            "node": node_name,
+                            "output": display_output
+                        })
+
+                    result = accumulated_state
                     match_score = extract_match_score(result['analysis'])
                     
                     all_results.append({
@@ -319,7 +342,8 @@ else:
                         "match_score": match_score,
                         "analysis": result['analysis'],
                         "enhancement_suggestions": result['enhancement_suggestions'],
-                        "timestamp": datetime.now()
+                        "timestamp": datetime.now(),
+                        "workflow_steps": workflow_steps # Store the steps
                     })
                     st.session_state.messages.append(f"Finished processing {uploaded_resume.name}. Match Score: {match_score}%")
                     progress_bar.progress((i + 1) / total_resumes, text=f"Analyzing resume {i + 1} of {total_resumes}")
@@ -357,4 +381,8 @@ else:
                     st.markdown(result['analysis'])
                 with st.expander("View Enhancement Suggestions"):
                     st.markdown(result['enhancement_suggestions'])
+                with st.expander("View Explainable AI Workflow Trace"):
+                    for step in result.get("workflow_steps", []):
+                        st.write(f"**Node:** `{step['node']}`")
+                        st.json(step['output'])
                 st.markdown("---")
