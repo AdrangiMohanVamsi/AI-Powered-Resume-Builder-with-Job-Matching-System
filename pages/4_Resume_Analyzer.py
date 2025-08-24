@@ -147,7 +147,7 @@ def gemini_analyzer_node(state):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         prompt = f"""
         You are an expert HR analyst. Please analyze the following resume and job description.
         A semantic similarity score between the resume and job description is {similarity_score:.2f}%.
@@ -182,7 +182,7 @@ def content_enhancer_node(state):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         prompt = f"""
         You are a career coach. Based on the following resume and job description, 
         provide specific, actionable suggestions for how the candidate can improve their resume.
@@ -279,7 +279,7 @@ def save_analysis_history(history):
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
-st.title("AI-Powered Resume Analyzer ")
+st.title("AI-Powered Resume Analyzer 🤖")
 
 api_key = os.getenv("GOOGLE_API_KEY")
 

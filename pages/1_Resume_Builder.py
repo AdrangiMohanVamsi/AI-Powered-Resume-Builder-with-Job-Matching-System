@@ -37,8 +37,8 @@ for i, exp in enumerate(st.session_state.work_experiences):
     st.subheader(f"Experience #{i + 1}")
     exp['job_title'] = st.text_input("Job Title", value=exp.get('job_title', ''), key=f"job_title_{exp['id']}")
     exp['company'] = st.text_input("Company", value=exp.get('company', ''), key=f"company_{exp['id']}")
-    exp['start_date'] = st.text_input("Start Date (YYYY-MM)", value=exp.get('start_date', ''), key=f"start_date_{exp['id']}")
-    exp['end_date'] = st.text_input("End Date (YYYY-MM or Present)", value=exp.get('end_date', ''), key=f"end_date_{exp['id']}")
+    exp['start_date'] = st.text_input("Start Date (MM YYYY)", value=exp.get('start_date', ''), key=f"start_date_{exp['id']}")
+    exp['end_date'] = st.text_input("End Date (MM YYYY or Present)", value=exp.get('end_date', ''), key=f"end_date_{exp['id']}")
     exp['responsibilities'] = st.text_area("Responsibilities (one per line)", value=exp.get('responsibilities', ''), key=f"responsibilities_{exp['id']}")
 
 if st.button("Add Another Experience"):
@@ -51,7 +51,7 @@ for i, edu in enumerate(st.session_state.education_entries):
     st.subheader(f"Education #{i + 1}")
     edu['degree'] = st.text_input("Degree", value=edu.get('degree', ''), key=f"degree_{edu['id']}")
     edu['school'] = st.text_input("School", value=edu.get('school', ''), key=f"school_{edu['id']}")
-    edu['graduation_date'] = st.text_input("Graduation Date (YYYY-MM)", value=edu.get('graduation_date', ''), key=f"graduation_date_{edu['id']}")
+    edu['graduation_date'] = st.text_input("Duration (YYYY - YYYY)", value=edu.get('graduation_date', ''), key=f"graduation_date_{edu['id']}")
 
 if st.button("Add Another Education"):
     new_id = max(e['id'] for e in st.session_state.education_entries) + 1
