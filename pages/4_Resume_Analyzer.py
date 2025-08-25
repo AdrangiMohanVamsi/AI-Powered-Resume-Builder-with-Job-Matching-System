@@ -13,27 +13,22 @@ import json
 from pathlib import Path
 import numpy as np
 import chromadb
+import pandas as pd
 
 load_dotenv()
 
 ANALYSIS_HISTORY_FILE = Path("analysis_history.json")
 CHROMA_DB_PATH = "./chroma_db"
 
-# Initialize ChromaDB client
 chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-# Get or create a collection for resumes
-# We'll use the SentenceTransformer model name as the embedding function for Chroma
-# This ensures consistency between our manual embeddings and Chroma's internal ones if we let it embed
-# For now, we'll manually embed and pass them.
+
 resume_collection = chroma_client.get_or_create_collection(
     name="resume_embeddings",
-    # If you want Chroma to handle embeddings, you'd specify an embedding_function here.
-    # For this implementation, we'll generate embeddings ourselves and pass them.
-    # embedding_function=SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+    
 )
 
-# 1. Define the state for our graph
+
 class GraphState(TypedDict):
     resume_text: str
     jd_text: str
@@ -44,7 +39,7 @@ class GraphState(TypedDict):
     enhancement_suggestions: str
     api_key: str
 
-# 2. Define the nodes (agents) for our graph
+
 def resume_parser_node(state):
     st.session_state.messages.append("Parsing resume...")
     resume_text = state["resume_text"]
@@ -65,26 +60,23 @@ def semantic_matcher_node(state):
     model = SentenceTransformer('all-MiniLM-L6-v2')
 
     try:
-        # Generate embedding for the current resume
+        
         resume_embedding_np = model.encode(resume_text, convert_to_numpy=True)
         
-        # Generate embedding for the job description
+        
         jd_embedding_np = model.encode(jd_text, convert_to_numpy=True)
 
-        # Create a unique ID for the resume (e.g., hash of content or a UUID)
-        # For simplicity, let's use a hash of the resume text for now
+        
         resume_id = str(hash(resume_text))
 
-        # Add resume embedding to ChromaDB (if not already present)
-        # We'll try to get it first to avoid duplicates if the same resume is analyzed multiple times
+        
         try:
-            # Check if the resume_id already exists in the collection
-            # This is a simplified check; in a real app, you'd manage IDs more robustly
+            
             existing_entry = resume_collection.get(ids=[resume_id], include=[])
             if not existing_entry['ids']:
                 resume_collection.add(
-                    embeddings=[resume_embedding_np.tolist()], # Convert numpy array to list for storage
-                    documents=[resume_text], # Store the full resume text as a document
+                    embeddings=[resume_embedding_np.tolist()], 
+                    documents=[resume_text], 
                     metadatas=[{"type": "resume", "id": resume_id}],
                     ids=[resume_id]
                 )
@@ -93,37 +85,23 @@ def semantic_matcher_node(state):
                 st.session_state.messages.append(f"Resume {resume_id} already in ChromaDB.")
         except Exception as e:
             st.session_state.messages.append(f"Error adding resume to ChromaDB: {e}")
-            # Continue even if adding fails, as we might still query existing data
+            
 
-        # Query ChromaDB with the job description embedding to find similar resumes
-        # We are querying for the top 1 similar resume to the JD
+        
         results = resume_collection.query(
             query_embeddings=[jd_embedding_np.tolist()],
-            n_results=1, # We want the most similar resume
-            # You can add where_clause for filtering if you have metadata
+            n_results=1, 
         )
         
         similarity_score = 0.0
         if results and results['distances'] and results['distances'][0]:
-            # ChromaDB returns L2 distance by default. We need to convert it to cosine similarity.
-            # For normalized vectors, L2 distance is related to cosine similarity: L2_dist = sqrt(2 - 2 * cos_sim)
-            # So, cos_sim = 1 - (L2_dist^2 / 2)
-            # However, SentenceTransformer embeddings are normalized, so we can directly use the distance.
-            # A smaller distance means higher similarity.
-            # Let's assume a simple inverse relationship for scoring for now, or use cosine_similarity directly if needed.
-            # For simplicity, let's just use the cosine similarity from the original model for the score,
-            # as ChromaDB's distance might not directly map to the 0-100% range intuitively without conversion.
-            # We'll re-calculate cosine similarity for the top match found in Chroma for the score.
             
-            # Get the embedding of the most similar resume from ChromaDB
-            # Note: ChromaDB returns embeddings as lists, so convert back to numpy for cosine_similarity
             if results['embeddings'] and results['embeddings'][0]:
-                top_resume_embedding_from_db = results['embeddings'][0][0] # Access the first embedding of the first result
+                top_resume_embedding_from_db = results['embeddings'][0][0] 
                 
-                # Calculate cosine similarity between JD embedding and the top resume embedding from DB
                 similarity = cosine_similarity(jd_embedding_np.reshape(1, -1), 
                                                np.array(top_resume_embedding_from_db).reshape(1, -1))[0][0]
-                similarity_score = round(similarity * 100, 2) # Convert to percentage
+                similarity_score = round(similarity * 100, 2) 
                 st.session_state.messages.append(f"Semantic similarity score (from ChromaDB query): {similarity_score:.2f}%")
             else:
                 st.session_state.messages.append("No embeddings returned from ChromaDB query.")
@@ -132,10 +110,9 @@ def semantic_matcher_node(state):
 
     except Exception as e:
         st.session_state.messages.append(f"Error during semantic matching with ChromaDB: {e}")
-        similarity_score = 0.0 # Default to 0 on error
+        similarity_score = 0.0 
     
-    # We still return resume_embedding and jd_embedding as they might be used elsewhere in the graph
-    # For now, we'll return the numpy arrays directly, assuming they are handled by TypedDict
+
     return {"resume_embedding": resume_embedding_np, "jd_embedding": jd_embedding_np, "similarity_score": similarity_score}
 
 def gemini_analyzer_node(state):
@@ -147,7 +124,7 @@ def gemini_analyzer_node(state):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
         You are an expert HR analyst. Please analyze the following resume and job description.
         A semantic similarity score between the resume and job description is {similarity_score:.2f}%.
@@ -182,7 +159,7 @@ def content_enhancer_node(state):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"""
         You are a career coach. Based on the following resume and job description, 
         provide specific, actionable suggestions for how the candidate can improve their resume.
@@ -204,7 +181,7 @@ def content_enhancer_node(state):
         
     return {"enhancement_suggestions": enhancement_suggestions}
 
-# 3. Build the graph and our own representation for visualization
+
 workflow = StateGraph(GraphState)
 graph_representation = {"nodes": set(), "edges": []}
 
@@ -231,10 +208,10 @@ add_edge_and_represent("content_enhancer", END)
 
 app = workflow.compile()
 
-# --- Store graph representation in session state ---
+
 st.session_state.graph_representation = graph_representation
 
-# --- Utility Functions ---
+
 def extract_text_from_pdf(file):
     pdf_reader = PyPDF2.PdfReader(file)
     text = ""
@@ -243,23 +220,23 @@ def extract_text_from_pdf(file):
     return text
 
 def extract_match_score(analysis_text):
-    # Try to extract "Overall Match Score" first
+    
     overall_match = re.search(r"Overall Match Score:.*?(\d+)%", analysis_text)
     if overall_match:
         return int(overall_match.group(1))
     
-    # Fallback to "Match Score" if "Overall Match Score" is not found
+    
     match = re.search(r"Match Score:.*?(\d+)%", analysis_text)
     if match:
         return int(match.group(1))
     
-    return 0 # Default score if not found
+    return 0 
 
 def load_analysis_history():
     if ANALYSIS_HISTORY_FILE.exists():
         with open(ANALYSIS_HISTORY_FILE, "r") as f:
             history = json.load(f)
-            # Convert timestamp strings back to datetime objects
+            
             for entry in history:
                 if "timestamp" in entry and isinstance(entry["timestamp"], str):
                     entry["timestamp"] = datetime.fromisoformat(entry["timestamp"])
@@ -268,7 +245,7 @@ def load_analysis_history():
 
 def save_analysis_history(history):
     with open(ANALYSIS_HISTORY_FILE, "w") as f:
-        # Convert datetime objects to strings for JSON serialization
+        
         serializable_history = []
         for entry in history:
             serializable_entry = entry.copy()
@@ -277,7 +254,7 @@ def save_analysis_history(history):
             serializable_history.append(serializable_entry)
         json.dump(serializable_history, f, indent=4)
 
-# --- Streamlit UI ---
+
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
 st.title("AI-Powered Resume Analyzer 🤖")
 
@@ -300,8 +277,8 @@ else:
     if st.button("Analyze Resumes"):
         if uploaded_resumes and job_description:
             all_results = []
-            st.session_state.messages = [] # Clear messages for new analysis
-            st.session_state.all_resume_results = [] # Clear previous results
+            st.session_state.messages = [] 
+            st.session_state.all_resume_results = [] 
 
             with st.spinner("Running analysis for all resumes..."):
                 total_resumes = len(uploaded_resumes)
@@ -312,18 +289,18 @@ else:
                     
                     inputs = {"resume_text": resume_text, "jd_text": job_description, "api_key": api_key}
                     
-                    # --- Explainable AI: Capture workflow steps ---
+                    
                     workflow_steps = []
                     accumulated_state = {}
                     for step in app.stream(inputs):
                         node_name = list(step.keys())[0]
                         node_output = step[node_name]
                         
-                        # The output of a node is a dictionary that gets merged into the state.
-                        # So we can just update our accumulated state with it.
+                        
+                        
                         accumulated_state.update(node_output)
 
-                        # Clean up output for display
+                        
                         display_output = node_output.copy()
                         if "resume_embedding" in display_output:
                             display_output["resume_embedding"] = "Embedding generated (not shown)"
@@ -344,25 +321,25 @@ else:
                         "analysis": result['analysis'],
                         "enhancement_suggestions": result['enhancement_suggestions'],
                         "timestamp": datetime.now(),
-                        "workflow_steps": workflow_steps # Store the steps
+                        "workflow_steps": workflow_steps 
                     })
                     st.session_state.messages.append(f"Finished processing {uploaded_resume.name}. Match Score: {match_score}%")
                     progress_bar.progress((i + 1) / total_resumes, text=f"Analyzing resume {i + 1} of {total_resumes}")
 
             st.success("Analysis complete for all resumes!")
 
-            all_results.sort(key=lambda x: x['match_score'], reverse=True) # Ensure sorting
-            st.session_state.all_resume_results = all_results # Store in session state
+            all_results.sort(key=lambda x: x['match_score'], reverse=True) 
+            st.session_state.all_resume_results = all_results 
 
-            # Update analysis history with the latest batch (optional, can be refined)
+ 
             for result in st.session_state.all_resume_results:
                 st.session_state.analysis_history.append({
                     "timestamp": result['timestamp'],
                     "match_score": result['match_score'],
-                    "jd_text": job_description, # This will be the same JD for all in this batch
+                    "jd_text": job_description, 
                     "analysis": result['analysis'],
-                    "resume_name": result['resume_name'], # Add resume_name
-                    "enhancement_suggestions": result['enhancement_suggestions'] # Add enhancement_suggestions
+                    "resume_name": result['resume_name'], 
+                    "enhancement_suggestions": result['enhancement_suggestions'] 
                 })
             save_analysis_history(st.session_state.analysis_history)
 
@@ -387,3 +364,43 @@ else:
                         st.write(f"**Node:** `{step['node']}`")
                         st.json(step['output'])
                 st.markdown("---")
+
+
+    st.header("Workflow Log")
+    if st.session_state.messages:
+        log_container = st.container()
+        with log_container:
+            for msg in st.session_state.messages:
+                st.text(msg)
+    else:
+        st.info("No workflow messages to display yet. Run an analysis to see the log.")
+        
+    st.header("ChromaDB Status")
+    try:
+        count = resume_collection.count()
+        st.success(f"ChromaDB is active. Collection '{resume_collection.name}' contains {count} resume embeddings.")
+    except Exception as e:
+        st.error(f"Could not connect to ChromaDB: {e}")
+        st.warning("Semantic matching features will be limited. Please ensure ChromaDB is running.")
+        
+    st.header("Historical Resume Matches")
+    if st.session_state.analysis_history:
+        
+        history_df = pd.DataFrame(st.session_state.analysis_history)
+        grouped_by_jd = history_df.groupby('jd_text')
+        
+        for jd, group in grouped_by_jd:
+            st.subheader(f"Job Description: {jd[:100]}...") 
+            
+            
+            group_sorted = group.sort_values(by='match_score', ascending=False)
+            
+            for i, row in group_sorted.iterrows():
+                st.markdown(f"**Resume: {row['resume_name']}** (Match Score: {row['match_score']}%)")
+                with st.expander("View Analysis"):
+                    st.markdown(row['analysis'])
+                with st.expander("View Enhancement Suggestions"):
+                    st.markdown(row['enhancement_suggestions'])
+                st.markdown("---")
+    else:
+        st.info("No historical resume analysis results to display yet.")

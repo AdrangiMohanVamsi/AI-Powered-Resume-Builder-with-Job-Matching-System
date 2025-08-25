@@ -10,12 +10,12 @@ from reportlab.lib import colors
 from reportlab.platypus.flowables import HRFlowable
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-# Configure Gemini API for summary generation
+
 api_key = os.getenv("GOOGLE_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
-# Initialize session state
+
 if 'work_experiences' not in st.session_state:
     st.session_state.work_experiences = [{"id": 1, 'job_title': '', 'company': '', 'start_date': '', 'end_date': '', 'responsibilities': ''}]
 if 'education_entries' not in st.session_state:
@@ -25,7 +25,7 @@ if 'project_entries' not in st.session_state:
 
 st.title("Dynamic Resume Builder")
 
-# --- Input Form ---
+
 st.header("Personal Information")
 name = st.text_input("Full Name")
 email = st.text_input("Email")
@@ -73,12 +73,12 @@ if st.button("Add Another Project"):
 st.header("Skills")
 skills = st.text_area("Skills (comma-separated)")
 
-# --- Resume Generation ---
+
 if st.button("Generate Resume"):
     if not name or not email or not phone:
         st.warning("Please fill in at least your name, email, and phone number.")
     else:
-        # Generate professional summary using Gemini
+        
         professional_summary = ""
         if api_key:
             try:
@@ -149,20 +149,20 @@ if st.button("Generate Resume"):
 
         flowables = []
 
-        # Header
+        
         flowables.append(Paragraph(name, styles['NameStyle']))
         contact_info = f"{email} | {phone} | {linkedin}"
         flowables.append(Paragraph(contact_info, styles['ContactStyle']))
-        #flowables.append(separator)
+        
 
-        # Professional Summary
+        
         if professional_summary:
             flowables.append(Paragraph("Professional Summary", styles['SectionHead']))
             flowables.append(separator)
             flowables.append(Paragraph(professional_summary, styles['ResumeBullet']))
             flowables.append(Spacer(1, 4))
 
-        # Education
+        
         flowables.append(Paragraph("Education", styles['SectionHead']))
         flowables.append(separator)
         for edu in st.session_state.education_entries:
@@ -172,12 +172,12 @@ if st.button("Generate Resume"):
                 edu_table = Table(
                     [[Paragraph(left_text, styles['ResumeBullet']),
                     Paragraph(right_text, styles['JobDate'])]],
-                    colWidths=[doc.width - 1.5*inch, 1.5*inch]  # adjust space
+                    colWidths=[doc.width - 1.5*inch, 1.5*inch]  
                 )
                 flowables.append(edu_table)
         flowables.append(Spacer(1, 4))
 
-        # Work Experience
+        
         flowables.append(Paragraph("Work Experience", styles['SectionHead']))
         flowables.append(separator)
         for exp in st.session_state.work_experiences:
@@ -191,7 +191,7 @@ if st.button("Generate Resume"):
                         flowables.append(Paragraph(resp.strip(), styles['ResumeBullet']))
                 flowables.append(Spacer(1, 4))
 
-        # Projects
+        
         flowables.append(Paragraph("Projects", styles['SectionHead']))
         flowables.append(separator)
         for proj in st.session_state.project_entries:
@@ -205,7 +205,7 @@ if st.button("Generate Resume"):
                         flowables.append(Paragraph(desc.strip(), styles['ResumeBullet']))
                 flowables.append(Spacer(1, 4))
 
-        # Skills
+        
         flowables.append(Paragraph("Skills", styles['SectionHead']))
         flowables.append(separator)
         if skills:
