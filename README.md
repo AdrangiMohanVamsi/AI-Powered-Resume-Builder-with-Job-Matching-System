@@ -1,4 +1,4 @@
-# 📝 Demo Resume Builder  
+# 📝 Resume Builder  
 
 An **AI-powered Resume Builder with Job Matching System** that helps users create professional resumes and intelligently match them with job descriptions using Natural Language Processing (NLP) and similarity scoring.
 
