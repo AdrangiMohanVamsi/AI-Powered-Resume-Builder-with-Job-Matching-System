@@ -4,16 +4,40 @@ import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from typing import TypedDict, Any
+from typing import TypedDict, Any, List
 import re
 from datetime import datetime
-from sentence_transformers import SentenceTransformer
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 from pathlib import Path
 import numpy as np
 import chromadb
 import pandas as pd
+import spacy
+from spacy.pipeline import EntityRuler
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import concurrent.futures
+import threading
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+nlp = spacy.load("en_core_web_sm")
+
+# Add entity ruler to the pipeline
+ruler = EntityRuler(nlp, overwrite_ents=True)
+patterns = [
+    {"label": "WORK_EXPERIENCE", "pattern": [{"LOWER": "work"}, {"LOWER": "experience"}]},
+    {"label": "PROJECTS", "pattern": "projects"},
+    {"label": "DEGREE", "pattern": "degree"},
+    {"label": "CERTIFICATIONS", "pattern": "certifications"},
+    {"label": "SKILLS", "pattern": "skills"},
+]
+ruler.add_patterns(patterns)
+if "entity_ruler" not in nlp.pipe_names:
+    nlp.add_pipe("entity_ruler", before="ner")
+
 
 load_dotenv()
 
@@ -22,12 +46,19 @@ CHROMA_DB_PATH = "./chroma_db"
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 
-
 resume_collection = chroma_client.get_or_create_collection(
     name="resume_embeddings",
-    
 )
 
+model = None
+model_lock = threading.Lock()
+
+def get_model():
+    global model
+    with model_lock:
+        if model is None:
+            model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    return model
 
 class GraphState(TypedDict):
     resume_text: str
@@ -38,93 +69,151 @@ class GraphState(TypedDict):
     analysis: str
     enhancement_suggestions: str
     api_key: str
+    extracted_resume_skills: list[str]
+    extracted_jd_skills: list[str]
+    extracted_work_experience: list[str]
+    extracted_projects: list[str]
+    extracted_degrees: list[str]
+    extracted_certifications: list[str]
+    messages: List[str]
 
 
 def resume_parser_node(state):
-    st.session_state.messages.append("Parsing resume...")
-    resume_text = state["resume_text"]
-    st.session_state.messages.append(f"Resume parsed. Length: {len(resume_text)} characters.")
-    return {"resume_text": resume_text}
+    messages = state.get("messages", [])
+    messages.append("Parsing resume...")
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    resume_text = "\n\n".join(text_splitter.split_text(state["resume_text"]))
+    messages.append(f"Resume parsed. Length: {len(resume_text)} characters.")
+    return {"resume_text": resume_text, "messages": messages}
 
 def jd_parser_node(state):
-    st.session_state.messages.append("Parsing job description...")
-    jd_text = state["jd_text"]
-    st.session_state.messages.append(f"Job description parsed. Length: {len(jd_text)} characters.")
-    return {"jd_text": jd_text}
+    messages = state.get("messages", [])
+    messages.append("Parsing job description...")
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    jd_text = "\n\n".join(text_splitter.split_text(state["jd_text"]))
+    messages.append(f"Job description parsed. Length: {len(jd_text)} characters.")
+    return {"jd_text": jd_text, "messages": messages}
+
+def extract_entities_with_spacy(text):
+    doc = nlp(text)
+    entities = {
+        "skills": [],
+        "work_experience": [],
+        "projects": [],
+        "degrees": [],
+        "certifications": [],
+    }
+
+    for ent in doc.ents:
+        logging.info(f"Found entity: {ent.text}, label: {ent.label_}")
+        if ent.label_ == "WORK_EXPERIENCE":
+            entities["work_experience"].append(ent.text)
+        elif ent.label_ == "PROJECTS":
+            entities["projects"].append(ent.text)
+        elif ent.label_ == "DEGREE":
+            entities["degrees"].append(ent.text)
+        elif ent.label_ == "CERTIFICATIONS":
+            entities["certifications"].append(ent.text)
+        elif ent.label_ == "SKILLS":
+            entities["skills"].append(ent.text)
+
+    return entities
 
 def semantic_matcher_node(state):
-    st.session_state.messages.append("Performing semantic matching with ChromaDB...")
+    messages = state.get("messages", [])
+    messages.append("Performing semantic matching with ChromaDB...")
     resume_text = state["resume_text"]
     jd_text = state["jd_text"]
-
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = get_model()
+    
+    resume_embedding_np = None
+    jd_embedding_np = None
+    extracted_resume_skills = []
+    extracted_jd_skills = []
+    extracted_work_experience = []
+    extracted_projects = []
+    extracted_degrees = []
+    extracted_certifications = []
+    similarity_score = 0.0
 
     try:
-        
-        resume_embedding_np = model.encode(resume_text, convert_to_numpy=True)
-        
-        
-        jd_embedding_np = model.encode(jd_text, convert_to_numpy=True)
+        resume_embedding_np = np.array(model.embed_query(resume_text))
+        jd_embedding_np = np.array(model.embed_query(jd_text))
 
-        
+        # Extract entities
+        resume_entities = extract_entities_with_spacy(resume_text)
+        jd_entities = extract_entities_with_spacy(jd_text)
+
+        extracted_resume_skills = resume_entities["skills"]
+        extracted_jd_skills = jd_entities["skills"]
+        extracted_work_experience = resume_entities["work_experience"]
+        extracted_projects = resume_entities["projects"]
+        extracted_degrees = resume_entities["degrees"]
+        extracted_certifications = resume_entities["certifications"]
+
+        messages.append(f"Extracted {len(extracted_resume_skills)} skills, {len(extracted_work_experience)} work experiences, {len(extracted_projects)} projects, {len(extracted_degrees)} degrees, and {len(extracted_certifications)} certifications from resume.")
+
         resume_id = str(hash(resume_text))
 
-        
         try:
-            
             existing_entry = resume_collection.get(ids=[resume_id], include=[])
             if not existing_entry['ids']:
                 resume_collection.add(
-                    embeddings=[resume_embedding_np.tolist()], 
-                    documents=[resume_text], 
+                    embeddings=[resume_embedding_np.tolist()],
+                    documents=[resume_text],
                     metadatas=[{"type": "resume", "id": resume_id}],
                     ids=[resume_id]
                 )
-                st.session_state.messages.append(f"Added resume {resume_id} to ChromaDB.")
+                messages.append(f"Added resume {resume_id} to ChromaDB.")
             else:
-                st.session_state.messages.append(f"Resume {resume_id} already in ChromaDB.")
+                messages.append(f"Resume {resume_id} already in ChromaDB.")
         except Exception as e:
-            st.session_state.messages.append(f"Error adding resume to ChromaDB: {e}")
-            
+            messages.append(f"Error adding resume to ChromaDB: {e}")
 
-        
         results = resume_collection.query(
             query_embeddings=[jd_embedding_np.tolist()],
-            n_results=1, 
+            n_results=1,
         )
-        
-        similarity_score = 0.0
+
         if results and results['distances'] and results['distances'][0]:
-            
             if results['embeddings'] and results['embeddings'][0]:
-                top_resume_embedding_from_db = results['embeddings'][0][0] 
-                
-                similarity = cosine_similarity(jd_embedding_np.reshape(1, -1), 
+                top_resume_embedding_from_db = results['embeddings'][0][0]
+                similarity = cosine_similarity(jd_embedding_np.reshape(1, -1),
                                                np.array(top_resume_embedding_from_db).reshape(1, -1))[0][0]
-                similarity_score = round(similarity * 100, 2) 
-                st.session_state.messages.append(f"Semantic similarity score (from ChromaDB query): {similarity_score:.2f}%")
+                similarity_score = round(similarity * 100, 2)
+                messages.append(f"Semantic similarity score (from ChromaDB query): {similarity_score:.2f}%")
             else:
-                st.session_state.messages.append("No embeddings returned from ChromaDB query.")
+                messages.append("No embeddings returned from ChromaDB query.")
         else:
-            st.session_state.messages.append("No results found in ChromaDB for the job description query.")
+            messages.append("No results found in ChromaDB for the job description query.")
 
     except Exception as e:
-        st.session_state.messages.append(f"Error during semantic matching with ChromaDB: {e}")
-        similarity_score = 0.0 
-    
+        messages.append(f"Error during semantic matching with ChromaDB: {e}")
 
-    return {"resume_embedding": resume_embedding_np, "jd_embedding": jd_embedding_np, "similarity_score": similarity_score}
+    return {
+        "resume_embedding": resume_embedding_np,
+        "jd_embedding": jd_embedding_np,
+        "similarity_score": similarity_score,
+        "extracted_resume_skills": extracted_resume_skills,
+        "extracted_jd_skills": extracted_jd_skills,
+        "extracted_work_experience": extracted_work_experience,
+        "extracted_projects": extracted_projects,
+        "extracted_degrees": extracted_degrees,
+        "extracted_certifications": extracted_certifications,
+        "messages": messages,
+    }
 
 def gemini_analyzer_node(state):
-    st.session_state.messages.append("Analyzing with Gemini...")
+    messages = state.get("messages", [])
+    messages.append("Analyzing with Gemini...")
     api_key = state["api_key"]
     resume_text = state["resume_text"]
     jd_text = state["jd_text"]
     similarity_score = state["similarity_score"]
-    
+
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash', generation_config=genai.types.GenerationConfig(temperature=0))
         prompt = f"""
         You are an expert HR analyst. Please analyze the following resume and job description.
         A semantic similarity score between the resume and job description is {similarity_score:.2f}%.
@@ -144,26 +233,27 @@ def gemini_analyzer_node(state):
         """
         response = model.generate_content(prompt)
         analysis = response.text
-        st.session_state.messages.append("Gemini analysis complete.")
+        messages.append("Gemini analysis complete.")
     except Exception as e:
         analysis = f"An error occurred: {e}"
-        st.session_state.messages.append(f"Gemini analysis failed: {e}")
-    
-    return {"analysis": analysis}
+        messages.append(f"Gemini analysis failed: {e}")
+
+    return {"analysis": analysis, "messages": messages}
 
 def content_enhancer_node(state):
-    st.session_state.messages.append("Generating enhancement suggestions...")
+    messages = state.get("messages", [])
+    messages.append("Generating enhancement suggestions...")
     api_key = state["api_key"]
     resume_text = state["resume_text"]
     jd_text = state["jd_text"]
-    
+
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash', generation_config=genai.types.GenerationConfig(temperature=0))
         prompt = f"""
-        You are a career coach. Based on the following resume and job description, 
+        You are a career coach. Based on the following resume and job description,
         provide specific, actionable suggestions for how the candidate can improve their resume.
-        Focus on quantifiable achievements, tailoring the language to the job description, and explicitly identifying any skill gaps.
+        Focus on quantifiable achievements, a more professional tone, and explicitly identifying any skill gaps.
         Include a dedicated section for "Identified Skill Gaps" if applicable.
 
         **Resume:**
@@ -174,12 +264,12 @@ def content_enhancer_node(state):
         """
         response = model.generate_content(prompt)
         enhancement_suggestions = response.text
-        st.session_state.messages.append("Enhancement suggestions generated.")
+        messages.append("Enhancement suggestions generated.")
     except Exception as e:
         enhancement_suggestions = f"An error occurred: {e}"
-        st.session_state.messages.append(f"Enhancement suggestion generation failed: {e}")
-        
-    return {"enhancement_suggestions": enhancement_suggestions}
+        messages.append(f"Enhancement suggestion generation failed: {e}")
+
+    return {"enhancement_suggestions": enhancement_suggestions, "messages": messages}
 
 
 workflow = StateGraph(GraphState)
@@ -220,23 +310,18 @@ def extract_text_from_pdf(file):
     return text
 
 def extract_match_score(analysis_text):
-    
     overall_match = re.search(r"Overall Match Score:.*?(\d+)%", analysis_text)
     if overall_match:
         return int(overall_match.group(1))
-    
-    
     match = re.search(r"Match Score:.*?(\d+)%", analysis_text)
     if match:
         return int(match.group(1))
-    
-    return 0 
+    return 0
 
 def load_analysis_history():
     if ANALYSIS_HISTORY_FILE.exists():
         with open(ANALYSIS_HISTORY_FILE, "r") as f:
             history = json.load(f)
-            
             for entry in history:
                 if "timestamp" in entry and isinstance(entry["timestamp"], str):
                     entry["timestamp"] = datetime.fromisoformat(entry["timestamp"])
@@ -245,7 +330,6 @@ def load_analysis_history():
 
 def save_analysis_history(history):
     with open(ANALYSIS_HISTORY_FILE, "w") as f:
-        
         serializable_history = []
         for entry in history:
             serializable_entry = entry.copy()
@@ -254,6 +338,40 @@ def save_analysis_history(history):
             serializable_history.append(serializable_entry)
         json.dump(serializable_history, f, indent=4)
 
+def process_resume(resume_file, job_description, api_key):
+    resume_text = extract_text_from_pdf(resume_file)
+    inputs = {"resume_text": resume_text, "jd_text": job_description, "api_key": api_key, "messages": []}
+
+    workflow_steps = []
+    accumulated_state = {}
+    for step in app.stream(inputs):
+        node_name = list(step.keys())[0]
+        node_output = step[node_name]
+        accumulated_state.update(node_output)
+
+        display_output = node_output.copy()
+        if "resume_embedding" in display_output:
+            display_output["resume_embedding"] = "Embedding generated (not shown)"
+        if "jd_embedding" in display_output:
+            display_output["jd_embedding"] = "Embedding generated (not shown)"
+
+        workflow_steps.append({
+            "node": node_name,
+            "output": display_output
+        })
+
+    result = accumulated_state
+    match_score = extract_match_score(result.get('analysis', ''))
+
+    return {
+        "resume_name": resume_file.name,
+        "match_score": match_score,
+        "analysis": result.get('analysis', ''),
+        "enhancement_suggestions": result.get('enhancement_suggestions', ''),
+        "timestamp": datetime.now(),
+        "workflow_steps": workflow_steps,
+        "messages": result.get("messages", [])
+    }
 
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
 st.title("AI-Powered Resume Analyzer 🤖")
@@ -277,69 +395,41 @@ else:
     if st.button("Analyze Resumes"):
         if uploaded_resumes and job_description:
             all_results = []
-            st.session_state.messages = [] 
-            st.session_state.all_resume_results = [] 
+            st.session_state.messages = []
+            st.session_state.all_resume_results = []
 
             with st.spinner("Running analysis for all resumes..."):
                 total_resumes = len(uploaded_resumes)
                 progress_bar = st.progress(0)
-                for i, uploaded_resume in enumerate(uploaded_resumes):
-                    st.session_state.messages.append(f"Processing resume: {uploaded_resume.name}")
-                    resume_text = extract_text_from_pdf(uploaded_resume)
-                    
-                    inputs = {"resume_text": resume_text, "jd_text": job_description, "api_key": api_key}
-                    
-                    
-                    workflow_steps = []
-                    accumulated_state = {}
-                    for step in app.stream(inputs):
-                        node_name = list(step.keys())[0]
-                        node_output = step[node_name]
-                        
-                        
-                        
-                        accumulated_state.update(node_output)
 
-                        
-                        display_output = node_output.copy()
-                        if "resume_embedding" in display_output:
-                            display_output["resume_embedding"] = "Embedding generated (not shown)"
-                        if "jd_embedding" in display_output:
-                            display_output["jd_embedding"] = "Embedding generated (not shown)"
-                        
-                        workflow_steps.append({
-                            "node": node_name,
-                            "output": display_output
-                        })
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future_to_resume = {executor.submit(process_resume, resume, job_description, api_key): resume for resume in uploaded_resumes}
 
-                    result = accumulated_state
-                    match_score = extract_match_score(result['analysis'])
-                    
-                    all_results.append({
-                        "resume_name": uploaded_resume.name,
-                        "match_score": match_score,
-                        "analysis": result['analysis'],
-                        "enhancement_suggestions": result['enhancement_suggestions'],
-                        "timestamp": datetime.now(),
-                        "workflow_steps": workflow_steps 
-                    })
-                    st.session_state.messages.append(f"Finished processing {uploaded_resume.name}. Match Score: {match_score}%")
-                    progress_bar.progress((i + 1) / total_resumes, text=f"Analyzing resume {i + 1} of {total_resumes}")
+                    for i, future in enumerate(concurrent.futures.as_completed(future_to_resume)):
+                        resume = future_to_resume[future]
+                        try:
+                            result = future.result()
+                            all_results.append(result)
+                            st.session_state.messages.extend(result['messages'])
+                            st.session_state.messages.append(f"Finished processing {result['resume_name']}. Match Score: {result['match_score']}%")
+                        except Exception as exc:
+                            st.session_state.messages.append(f"{resume.name} generated an exception: {exc}")
+
+                        progress_bar.progress((i + 1) / total_resumes, text=f"Analyzing resume {i + 1} of {total_resumes}")
 
             st.success("Analysis complete for all resumes!")
 
-            all_results.sort(key=lambda x: x['match_score'], reverse=True) 
-            st.session_state.all_resume_results = all_results 
+            all_results.sort(key=lambda x: x['match_score'], reverse=True)
+            st.session_state.all_resume_results = all_results
 
- 
             for result in st.session_state.all_resume_results:
                 st.session_state.analysis_history.append({
                     "timestamp": result['timestamp'],
                     "match_score": result['match_score'],
-                    "jd_text": job_description, 
+                    "jd_text": job_description,
                     "analysis": result['analysis'],
-                    "resume_name": result['resume_name'], 
-                    "enhancement_suggestions": result['enhancement_suggestions'] 
+                    "resume_name": result['resume_name'],
+                    "enhancement_suggestions": result['enhancement_suggestions']
                 })
             save_analysis_history(st.session_state.analysis_history)
 
@@ -348,17 +438,18 @@ else:
 
     if 'all_resume_results' in st.session_state and st.session_state.all_resume_results:
         st.header("Top Resumes Matching the Job Description")
-        
+
         max_n = len(st.session_state.all_resume_results)
         if max_n > 0:
             num_to_display = st.number_input("Select number of top resumes to display", min_value=1, max_value=max_n, value=max_n, step=1)
 
             for i, result in enumerate(st.session_state.all_resume_results[:num_to_display]):
-                st.subheader(f"{i+1}. {result['resume_name']} (Match Score: {result['match_score']}%)")
+                st.subheader(f"{i+1}. {result['resume_name']} (Match Score: {result['match_score']}%) ")
                 with st.expander("View Analysis"):
                     st.markdown(result['analysis'])
                 with st.expander("View Enhancement Suggestions"):
                     st.markdown(result['enhancement_suggestions'])
+                
                 with st.expander("View Explainable AI Workflow Trace"):
                     for step in result.get("workflow_steps", []):
                         st.write(f"**Node:** `{step['node']}`")
@@ -374,7 +465,7 @@ else:
                 st.text(msg)
     else:
         st.info("No workflow messages to display yet. Run an analysis to see the log.")
-        
+
     st.header("ChromaDB Status")
     try:
         count = resume_collection.count()
@@ -382,21 +473,19 @@ else:
     except Exception as e:
         st.error(f"Could not connect to ChromaDB: {e}")
         st.warning("Semantic matching features will be limited. Please ensure ChromaDB is running.")
-        
+
     st.header("Historical Resume Matches")
     if st.session_state.analysis_history:
-        
         history_df = pd.DataFrame(st.session_state.analysis_history)
         grouped_by_jd = history_df.groupby('jd_text')
-        
+
         for jd, group in grouped_by_jd:
-            st.subheader(f"Job Description: {jd[:100]}...") 
-            
-            
+            st.subheader(f"Job Description: {jd[:100]}...")
+
             group_sorted = group.sort_values(by='match_score', ascending=False)
-            
+
             for i, row in group_sorted.iterrows():
-                st.markdown(f"**Resume: {row['resume_name']}** (Match Score: {row['match_score']}%)")
+                st.markdown(f"**Resume: {row['resume_name']}** (Match Score: {row['match_score']}%) ")
                 with st.expander("View Analysis"):
                     st.markdown(row['analysis'])
                 with st.expander("View Enhancement Suggestions"):

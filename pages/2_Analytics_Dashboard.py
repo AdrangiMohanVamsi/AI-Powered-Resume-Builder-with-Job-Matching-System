@@ -2,7 +2,10 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 from collections import Counter
-import re
+import spacy
+
+
+nlp = spacy.load("en_core_web_sm")
 
 st.set_page_config(page_title="Analytics Dashboard", page_icon="📊", layout="wide")
 
@@ -31,7 +34,8 @@ else:
     with col2:
         st.header("Keyword Analysis")
         all_jd_text = " ".join(history_df['jd_text'].tolist())
-        words = re.findall(r'\b\w+\b', all_jd_text.lower())
+        doc = nlp(all_jd_text.lower())
+        words = [token.text for token in doc if token.is_alpha]
         stopwords = ['the', 'a', 'an', 'in', 'to', 'of', 'and', 'for', 'with', 'is', 'on', 'at', 'as'] 
         filtered_words = [word for word in words if word not in stopwords and len(word) > 2]
         word_counts = Counter(filtered_words)
