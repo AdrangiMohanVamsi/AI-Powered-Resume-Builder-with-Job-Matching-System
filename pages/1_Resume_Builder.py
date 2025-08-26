@@ -25,53 +25,52 @@ if 'project_entries' not in st.session_state:
 
 st.title("Dynamic Resume Builder")
 
+with st.expander("Personal Information", expanded=True):
+    name = st.text_input("Full Name")
+    email = st.text_input("Email")
+    phone = st.text_input("Phone Number")
+    linkedin = st.text_input("LinkedIn Profile URL")
 
-st.header("Personal Information")
-name = st.text_input("Full Name")
-email = st.text_input("Email")
-phone = st.text_input("Phone Number")
-linkedin = st.text_input("LinkedIn Profile URL")
+with st.expander("Work Experience", expanded=True):
+    for i, exp in enumerate(st.session_state.work_experiences):
+        st.subheader(f"Experience #{i + 1}")
+        exp['job_title'] = st.text_input("Job Title", value=exp.get('job_title', ''), key=f"job_title_{exp['id']}")
+        exp['company'] = st.text_input("Company", value=exp.get('company', ''), key=f"company_{exp['id']}")
+        exp['start_date'] = st.text_input("Start Date (MM YYYY)", value=exp.get('start_date', ''), key=f"start_date_{exp['id']}")
+        exp['end_date'] = st.text_input("End Date (MM YYYY or Present)", value=exp.get('end_date', ''), key=f"end_date_{exp['id']}")
+        exp['responsibilities'] = st.text_area("Responsibilities (one per line)", value=exp.get('responsibilities', ''), key=f"responsibilities_{exp['id']}")
 
-st.header("Work Experience")
-for i, exp in enumerate(st.session_state.work_experiences):
-    st.subheader(f"Experience #{i + 1}")
-    exp['job_title'] = st.text_input("Job Title", value=exp.get('job_title', ''), key=f"job_title_{exp['id']}")
-    exp['company'] = st.text_input("Company", value=exp.get('company', ''), key=f"company_{exp['id']}")
-    exp['start_date'] = st.text_input("Start Date (MM YYYY)", value=exp.get('start_date', ''), key=f"start_date_{exp['id']}")
-    exp['end_date'] = st.text_input("End Date (MM YYYY or Present)", value=exp.get('end_date', ''), key=f"end_date_{exp['id']}")
-    exp['responsibilities'] = st.text_area("Responsibilities (one per line)", value=exp.get('responsibilities', ''), key=f"responsibilities_{exp['id']}")
+    if st.button("Add Another Experience"):
+        new_id = max(e['id'] for e in st.session_state.work_experiences) + 1
+        st.session_state.work_experiences.append({'id': new_id, 'job_title': '', 'company': '', 'start_date': '', 'end_date': '', 'responsibilities': ''})
+        st.rerun()
 
-if st.button("Add Another Experience"):
-    new_id = max(e['id'] for e in st.session_state.work_experiences) + 1
-    st.session_state.work_experiences.append({'id': new_id, 'job_title': '', 'company': '', 'start_date': '', 'end_date': '', 'responsibilities': ''})
-    st.rerun()
+with st.expander("Education", expanded=True):
+    for i, edu in enumerate(st.session_state.education_entries):
+        st.subheader(f"Education #{i + 1}")
+        edu['degree'] = st.text_input("Degree", value=edu.get('degree', ''), key=f"degree_{edu['id']}")
+        edu['school'] = st.text_input("School", value=edu.get('school', ''), key=f"school_{edu['id']}")
+        edu['graduation_date'] = st.text_input("Duration (YYYY - YYYY)", value=edu.get('graduation_date', ''), key=f"graduation_date_{edu['id']}")
 
-st.header("Education")
-for i, edu in enumerate(st.session_state.education_entries):
-    st.subheader(f"Education #{i + 1}")
-    edu['degree'] = st.text_input("Degree", value=edu.get('degree', ''), key=f"degree_{edu['id']}")
-    edu['school'] = st.text_input("School", value=edu.get('school', ''), key=f"school_{edu['id']}")
-    edu['graduation_date'] = st.text_input("Duration (YYYY - YYYY)", value=edu.get('graduation_date', ''), key=f"graduation_date_{edu['id']}")
+    if st.button("Add Another Education"):
+        new_id = max(e['id'] for e in st.session_state.education_entries) + 1
+        st.session_state.education_entries.append({'id': new_id, 'degree': '', 'school': '', 'graduation_date': ''})
+        st.rerun()
 
-if st.button("Add Another Education"):
-    new_id = max(e['id'] for e in st.session_state.education_entries) + 1
-    st.session_state.education_entries.append({'id': new_id, 'degree': '', 'school': '', 'graduation_date': ''})
-    st.rerun()
+with st.expander("Projects", expanded=True):
+    for i, proj in enumerate(st.session_state.project_entries):
+        st.subheader(f"Project #{i + 1}")
+        proj['name'] = st.text_input("Project Name", value=proj.get('name', ''), key=f"project_name_{proj['id']}")
+        proj['description'] = st.text_area("Project Description (one bullet per line)", value=proj.get('description', ''), key=f"project_description_{proj['id']}")
+        proj['technologies'] = st.text_input("Technologies Used", value=proj.get('technologies', ''), key=f"project_technologies_{proj['id']}")
 
-st.header("Projects")
-for i, proj in enumerate(st.session_state.project_entries):
-    st.subheader(f"Project #{i + 1}")
-    proj['name'] = st.text_input("Project Name", value=proj.get('name', ''), key=f"project_name_{proj['id']}")
-    proj['description'] = st.text_area("Project Description (one bullet per line)", value=proj.get('description', ''), key=f"project_description_{proj['id']}")
-    proj['technologies'] = st.text_input("Technologies Used", value=proj.get('technologies', ''), key=f"project_technologies_{proj['id']}")
+    if st.button("Add Another Project"):
+        new_id = max(p['id'] for p in st.session_state.project_entries) + 1
+        st.session_state.project_entries.append({'id': new_id, 'name': '', 'description': '', 'technologies': ''})
+        st.rerun()
 
-if st.button("Add Another Project"):
-    new_id = max(p['id'] for p in st.session_state.project_entries) + 1
-    st.session_state.project_entries.append({'id': new_id, 'name': '', 'description': '', 'technologies': ''})
-    st.rerun()
-
-st.header("Skills")
-skills = st.text_area("Skills (comma-separated)")
+with st.expander("Skills", expanded=True):
+    skills = st.text_area("Skills (comma-separated)")
 
 
 if st.button("Generate Resume"):
